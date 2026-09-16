@@ -12,9 +12,16 @@ lint:
   go vet ./...
   gofmt -l .
 
-# The nodes are amd64; this binary runs in a pod on one of them.
+# The nodes are amd64; these binaries run in a pod on one of them.
 build:
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/openbao-tpm-linux-amd64 ./cmd/openbao-tpm
+
+build-plugin:
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/openbao-plugin-kms-tpm ./cmd/openbao-plugin-kms-tpm
+
+# OpenBao checks this against the plugin stanza's sha256sum.
+plugin-sha: build-plugin
+  @shasum -a 256 bin/openbao-plugin-kms-tpm | cut -d" " -f1
 
 # Put the probe pod on a node and copy the binary in. NODE must have SecureBoot
 # and a TPM.
