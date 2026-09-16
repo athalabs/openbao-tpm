@@ -101,6 +101,7 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           {
             echo "## Deploying this release"
@@ -134,5 +135,3 @@ jobs:
             dist/checksums.txt.pem \
             dist/plugin.sha256 \
             sbom.spdx.json
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
