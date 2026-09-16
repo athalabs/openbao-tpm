@@ -1,0 +1,105 @@
+# Values for the openbao-helm chart (charts/openbao), wiring in the TPM seal.
+#
+# Verified against chart 0.29.4 / appVersion v2.6.2 by reading the chart
+# templates; not yet run. Two things in here are version-sensitive:
+#
+#   - sha256sum is REQUIRED on v2.6.2. Omitting it logs a warning at config
+#     parse time and then fails the seal with "start plugin client: error
+#     verifying checksum: no checksum provided". It becomes optional in v2.7.0.
+#   - v2.7.0 removes the built-in seals entirely, so the plugin route is the
+#     only route there.
+#
+# On Talos, a udev rule making /dev/tpmrm0 gid 989 mode 0660 is required
+# along with the supplementalGroups below is enough for the permission
+# bits. The devices cgroup is a separate gate — see deploy/README.md.
+
+server:
+  ha:
+    enabled: true
+    raft:
+      enabled: true
+      config: |
+        ui = false
+
+        listener "tcp" {
+          tls_disable = 1
+          address     = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+        }
+
+        service_registration "kubernetes" {}
+
+        plugin_directory = "/openbao/plugins"
+
+        # command is resolved inside plugin_directory, so it must be a bare
+        # filename: an absolute path is joined onto the directory and then
+        # rejected as being outside it.
+        plugin "kms" "tpm" {
+          command   = "openbao-plugin-kms-tpm"
+          sha256sum = "REPLACE_WITH_just_plugin-sha"
+        }
+
+        # The seal name must match the plugin name.
+        seal "tpm" {
+          artifacts = "/etc/openbao/tpm"
+          device    = "/dev/tpmrm0"
+          node_file = "/openbao/plugins/node"
+        }
+
+  volumes:
+    # plugin_directory must be real files. A ConfigMap or Secret volume cannot
+    # work: Kubernetes writes those as symlinks into a ..data directory, and
+    # OpenBao resolves symlinks and then requires the binary to sit directly in
+    # the plugin directory.
+    - name: plugins
+      emptyDir: {}
+    # Artifacts are read, not executed, so a Secret is fine here.
+    - name: tpm-artifacts
+      secret:
+        secretName: openbao-tpm-artifacts
+    - name: tpm-device
+      hostPath:
+        path: /dev/tpmrm0
+        type: CharDevice
+
+  volumeMounts:
+    - name: plugins
+      mountPath: /openbao/plugins
+      readOnly: true
+    - name: tpm-artifacts
+      mountPath: /etc/openbao/tpm
+      readOnly: true
+    - name: tpm-device
+      mountPath: /dev/tpmrm0
+
+  extraInitContainers:
+    # server.volumeMounts renders only into the main container, so an init
+    # container has to declare its own mounts.
+    - name: install-plugin
+      # Pin by digest. The release notes give the digest and the matching
+      # plugin sha256sum for the stanza above.
+      image: ghcr.io/athalabs/openbao-tpm@sha256:REPLACE_WITH_DIGEST
+      command: [sh, -ec]
+      args:
+        - |
+          cp /usr/local/bin/openbao-plugin-kms-tpm /openbao/plugins/
+          chmod 0755 /openbao/plugins/openbao-plugin-kms-tpm
+          # The chart cannot inject a downward-API env var, so hand the node
+          # name over as a file instead.
+          printf '%s' "$NODE_NAME" > /openbao/plugins/node
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - name: plugins
+          mountPath: /openbao/plugins
+
+  # Only nodes with SecureBoot and a TPM can unseal.
+  nodeSelector:
+    atha.gr/tpm: "ptt"
