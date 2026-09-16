@@ -145,6 +145,20 @@ func NewChallenge(art *envelope.Artifact) (*Challenge, error) {
 	}, nil
 }
 
+// Pin is the identity half of an artifact: the EK that names the TPM and the AK
+// that lives in it, with no unwrap key. It is what an operator records once per
+// node and later challenges or compares a fresh enrollment against.
+func Pin(art *envelope.Artifact) envelope.Artifact {
+	return envelope.Artifact{
+		Version:  art.Version,
+		Node:     art.Node,
+		EKPublic: art.EKPublic,
+		EKName:   art.EKName,
+		AKPublic: art.AKPublic,
+		AKName:   art.AKName,
+	}
+}
+
 // Activate answers a challenge. It runs on the node and needs both the EK and
 // the AK, which is the whole point: only that TPM can produce the answer.
 func Activate(t transport.TPM, challenge *Challenge) ([]byte, error) {

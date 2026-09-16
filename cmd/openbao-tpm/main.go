@@ -509,12 +509,7 @@ func verifyArtifact(args []string) error {
 		fmt.Println("              rather than merely having copied its public half")
 	}
 	if *writePin != "" {
-		pinned := envelope.Artifact{
-			Version:  envelope.ArtifactVersion,
-			Node:     art.Node,
-			EKPublic: art.EKPublic,
-			EKName:   art.EKName,
-		}
+		pinned := tpmkey.Pin(&art)
 		if err := writeJSON(*writePin, &pinned); err != nil {
 			return err
 		}

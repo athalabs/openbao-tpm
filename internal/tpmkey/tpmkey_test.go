@@ -276,3 +276,29 @@ func TestActivateRejectsWrongAKName(t *testing.T) {
 		t.Fatal("Activate accepted a credential that was not bound to this AK")
 	}
 }
+
+// A pin is the subset of an artifact that identifies the TPM. It must carry
+// enough to build a challenge, or "challenge against the pin" is a lie.
+func TestChallengeFromPin(t *testing.T) {
+	sim := openSim(t)
+
+	art, err := Enroll(sim, "node-a", DefaultPCRs())
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	pin := Pin(art)
+	if len(pin.Public) != 0 || len(pin.Private) != 0 {
+		t.Fatal("a pin must not carry the unwrap key")
+	}
+	challenge, err := NewChallenge(&pin)
+	if err != nil {
+		t.Fatalf("NewChallenge from pin: %v", err)
+	}
+	answer, err := Activate(sim, challenge)
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if !bytes.Equal(answer, challenge.Expected) {
+		t.Fatalf("activation returned %x, want %x", answer, challenge.Expected)
+	}
+}
