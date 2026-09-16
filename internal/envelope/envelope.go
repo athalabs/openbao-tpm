@@ -27,8 +27,11 @@ import (
 
 // Versions of the two formats. Both are written into every file so a future
 // reader can refuse what it does not understand.
+//
+// Artifact v2 renamed pcr_digest to policy_digest and added pcr_values; v1
+// artifacts must be re-enrolled.
 const (
-	ArtifactVersion = 1
+	ArtifactVersion = 2
 	EnvelopeVersion = 1
 )
 
@@ -67,12 +70,15 @@ type Artifact struct {
 	// PublicKeyPEM is the same public key in a form Go can encrypt to
 	// without a TPM present.
 	PublicKeyPEM string `json:"public_key_pem"`
-	// PCRs are the PCR indices (SHA-256 bank) the key's policy is bound to,
-	// and PCRDigest is their value at enrollment time, recorded so a later
-	// mismatch can be diagnosed rather than guessed at.
-	PCRs      []uint `json:"pcrs"`
-	PCRDigest []byte `json:"pcr_digest"`
-	Parent    string `json:"parent"`
+	// PCRs are the PCR indices (SHA-256 bank) the key's policy is bound to.
+	// PCRValues records what each held at enrollment, so a later PolicyPCR
+	// failure can be diagnosed by comparing values rather than guessed at.
+	// PolicyDigest is the authorisation policy those values produced, which
+	// is what the key was created under.
+	PCRs         []uint          `json:"pcrs"`
+	PCRValues    map[uint][]byte `json:"pcr_values"`
+	PolicyDigest []byte          `json:"policy_digest"`
+	Parent       string          `json:"parent"`
 
 	// The evidence half of the artifact. EKPublic is the marshalled public
 	// area of the node's endorsement key — the TPM's identity, which is what

@@ -165,6 +165,10 @@ func Enroll(t transport.TPM, node string, pcrs []uint) (*envelope.Artifact, erro
 	}
 	defer flush()
 
+	values, err := ReadPCRs(t, pcrs)
+	if err != nil {
+		return nil, err
+	}
 	policy, err := PolicyDigest(t, pcrs)
 	if err != nil {
 		return nil, err
@@ -228,7 +232,8 @@ func Enroll(t transport.TPM, node string, pcrs []uint) (*envelope.Artifact, erro
 		Private:      tpm2.Marshal(created.OutPrivate),
 		PublicKeyPEM: pubPEM,
 		PCRs:         pcrs,
-		PCRDigest:    policy,
+		PCRValues:    values,
+		PolicyDigest: policy,
 		Parent:       "ECCSRKTemplate",
 		CreatedAt:    time.Now().UTC(),
 	}

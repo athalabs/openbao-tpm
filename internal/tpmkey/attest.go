@@ -228,8 +228,8 @@ func VerifyArtifact(art *envelope.Artifact) error {
 		return fmt.Errorf("verify: unwrap key is not a decryption key")
 	}
 
-	if got, want := hex.EncodeToString(pub.AuthPolicy.Buffer), hex.EncodeToString(art.PCRDigest); got != want {
-		return fmt.Errorf("verify: key policy %s does not match the artifact's recorded PCR policy %s", got, want)
+	if got, want := hex.EncodeToString(pub.AuthPolicy.Buffer), hex.EncodeToString(art.PolicyDigest); got != want {
+		return fmt.Errorf("verify: key policy %s does not match the artifact's recorded policy %s", got, want)
 	}
 
 	name, err := tpm2.ObjectName(pub)

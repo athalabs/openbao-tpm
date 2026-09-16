@@ -327,7 +327,7 @@ func runSelftest(t transport.TPM, node string, pcrs []uint) error {
 		return fmt.Errorf("enroll: %w", err)
 	}
 	fmt.Printf("key name:  %s\n", art.KeyName)
-	fmt.Printf("policy:    %s\n", hex.EncodeToString(art.PCRDigest))
+	fmt.Printf("policy:    %s\n", hex.EncodeToString(art.PolicyDigest))
 
 	payload := []byte("openbao-tpm selftest payload")
 	env, err := envelope.Wrap(payload, nil, []envelope.Artifact{*art})

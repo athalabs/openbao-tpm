@@ -177,8 +177,8 @@ func TestArtifactRecordsTheRealPolicyDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
-	if !bytes.Equal(art.PCRDigest, want) {
-		t.Fatalf("artifact policy digest %x != %x", art.PCRDigest, want)
+	if !bytes.Equal(art.PolicyDigest, want) {
+		t.Fatalf("artifact policy digest %x != %x", art.PolicyDigest, want)
 	}
 }
 
@@ -300,5 +300,25 @@ func TestChallengeFromPin(t *testing.T) {
 	}
 	if !bytes.Equal(answer, challenge.Expected) {
 		t.Fatalf("activation returned %x, want %x", answer, challenge.Expected)
+	}
+}
+
+// The artifact records the PCR values themselves, not just the policy they
+// produce, so a later PolicyPCR failure can be diagnosed by comparing values.
+func TestArtifactRecordsPCRValues(t *testing.T) {
+	sim := openSim(t)
+
+	want, err := ReadPCRs(sim, DefaultPCRs())
+	if err != nil {
+		t.Fatalf("ReadPCRs: %v", err)
+	}
+	art, err := Enroll(sim, "node-a", DefaultPCRs())
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	for _, pcr := range DefaultPCRs() {
+		if !bytes.Equal(art.PCRValues[pcr], want[pcr]) {
+			t.Fatalf("PCR %d recorded as %x, want %x", pcr, art.PCRValues[pcr], want[pcr])
+		}
 	}
 }
