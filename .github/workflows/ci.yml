@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # The tpmkey and tpmwrap tests drive the Microsoft reference TPM
+      # simulator, which is cgo and links against OpenSSL. Without it those
+      # tests skip, and the ones that matter most would silently not run.
+      - name: Install simulator dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race
+
+      # Fail loudly if the simulator did not actually run, rather than passing
+      # on a suite that skipped itself.
+      - name: Confirm the simulator tests ran
+        run: |
+          go test ./internal/tpmkey/ -run TestEnrollThenUnwrap -v 2>&1 | tee out.txt
+          grep -q -- "--- PASS: TestEnrollThenUnwrap" out.txt
+
+      - name: Build
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
