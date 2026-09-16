@@ -1,0 +1,138 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write     # create the release
+  packages: write     # push to ghcr
+  id-token: write     # keyless signing via OIDC
+  attestations: write # build provenance
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Built here rather than inside the image build, so the hash published in
+      # the release is the hash of exactly the file that ends up in the image
+      # and in OpenBao's plugin stanza.
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          for cmd in openbao-plugin-kms-tpm openbao-tpm; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+              go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o "dist/$cmd" "./cmd/$cmd"
+          done
+          sha256sum dist/openbao-plugin-kms-tpm | cut -d' ' -f1 > dist/plugin.sha256
+          ( cd dist && sha256sum openbao-plugin-kms-tpm openbao-tpm > checksums.txt )
+          echo "PLUGIN_SHA256=$(cat dist/plugin.sha256)" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
+          build-args: |
+            PLUGIN_SHA256=${{ env.PLUGIN_SHA256 }}
+            VERSION=${{ github.ref_name }}
+          # Signed and attested below instead; buildx's own attestation
+          # manifests confuse cosign's digest handling.
+          provenance: false
+          sbom: false
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Keyless: the signing identity is this workflow, recorded in a public
+      # transparency log. There is no key to store or rotate.
+      - name: Sign the image
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      # The CLI is run by operators on the nodes, so it gets its own provenance
+      # rather than riding on the image's.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/openbao-plugin-kms-tpm, dist/openbao-tpm"
+
+      - name: Sign the checksums
+        run: cosign sign-blob --yes --output-signature dist/checksums.txt.sig --output-certificate dist/checksums.txt.pem dist/checksums.txt
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Deploying this release"
+            echo
+            echo '```'
+            echo "image:     ${IMAGE}@${DIGEST}"
+            echo "sha256sum: $(cat dist/plugin.sha256)   # openbao-plugin-kms-tpm"
+            echo '```'
+            echo
+            echo "Pin both. The digest fixes which image the init container stages;"
+            echo "the sha256sum is what OpenBao checks before it will run the plugin,"
+            echo "so a tampered binary fails even if it reached the plugin directory."
+            echo
+            echo "### Verify"
+            echo
+            echo '```'
+            echo "cosign verify ${IMAGE}@${DIGEST} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo
+            echo "gh attestation verify --owner ${{ github.repository_owner }} oci://${IMAGE}@${DIGEST}"
+            echo '```'
+          } > notes.md
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            dist/openbao-plugin-kms-tpm \
+            dist/openbao-tpm \
+            dist/checksums.txt \
+            dist/checksums.txt.sig \
+            dist/checksums.txt.pem \
+            dist/plugin.sha256 \
+            sbom.spdx.json
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
