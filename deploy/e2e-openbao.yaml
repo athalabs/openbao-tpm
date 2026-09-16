@@ -1,0 +1,139 @@
+# A throwaway single-node OpenBao that unseals itself with the TPM plugin.
+#
+# Not a deployment template: storage is node-local, there is one replica, and
+# the container runs privileged as root. It exists to prove the seal works end
+# to end on real hardware. For the real shape see openbao-values.yaml.
+#
+# Privileged because a hostPath device node is not usable without it: the
+# devices cgroup blocks access even for root until a device plugin grants it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  namespace: tpm-probe
+data:
+  bao.hcl: |
+    ui = false
+    disable_mlock = true
+
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = 1
+    }
+
+    storage "raft" {
+      path    = "/openbao/data"
+      node_id = "e2e"
+    }
+
+    api_addr     = "http://127.0.0.1:8200"
+    cluster_addr = "http://127.0.0.1:8201"
+
+    plugin_directory = "/openbao/plugins"
+
+    plugin "kms" "tpm" {
+      command   = "openbao-plugin-kms-tpm"
+      sha256sum = "PLUGIN_SHA"
+    }
+
+    seal "tpm" {
+      artifacts = "/etc/openbao/tpm"
+      device    = "/dev/tpmrm0"
+      node_file = "/openbao/plugins/node"
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openbao-data
+  namespace: tpm-probe
+spec:
+  storageClassName: local
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao
+  namespace: tpm-probe
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-tpm-e2e
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openbao-tpm-e2e
+    spec:
+      nodeName: NODE_PLACEHOLDER
+      initContainers:
+        # Waits for the plugin binary to be copied in, then records the node
+        # name for the seal. In a real deployment this container would carry the
+        # binary in its own image instead of waiting for it.
+        - name: stage-plugin
+          image: alpine:3.22
+          command: [sh, -ec]
+          args:
+            - |
+              until [ -s /openbao/plugins/openbao-plugin-kms-tpm ]; do sleep 2; done
+              chmod 0755 /openbao/plugins/openbao-plugin-kms-tpm
+              printf '%s' "$NODE_NAME" > /openbao/plugins/node
+              echo stagedfor "$NODE_NAME"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: plugins
+              mountPath: /openbao/plugins
+      containers:
+        - name: openbao
+          image: quay.io/openbao/openbao:2.6.2
+          command: [bao, server, -config=/etc/openbao/config/bao.hcl]
+          env:
+            - name: BAO_ADDR
+              value: http://127.0.0.1:8200
+            - name: SKIP_SETCAP
+              value: "true"
+            - name: SKIP_CHOWN
+              value: "true"
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - containerPort: 8200
+          volumeMounts:
+            - name: config
+              mountPath: /etc/openbao/config
+            - name: plugins
+              mountPath: /openbao/plugins
+            - name: artifacts
+              mountPath: /etc/openbao/tpm
+              readOnly: true
+            - name: data
+              mountPath: /openbao/data
+            - name: tpm
+              mountPath: /dev/tpmrm0
+      volumes:
+        - name: config
+          configMap:
+            name: openbao-config
+        - name: plugins
+          emptyDir: {}
+        - name: artifacts
+          secret:
+            secretName: openbao-tpm-artifacts
+        - name: data
+          persistentVolumeClaim:
+            claimName: openbao-data
+        - name: tpm
+          hostPath:
+            path: /dev/tpmrm0
+            type: CharDevice
