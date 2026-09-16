@@ -61,8 +61,13 @@ func (w *Wrapper) Type(context.Context) (wrapping.WrapperType, error) {
 //	seal "tpm" {
 //	  artifacts = "/etc/openbao/tpm"
 //	  device    = "/dev/tpmrm0"
-//	  node      = ""            # defaults to $NODE_NAME
+//	  node      = ""            # else $NODE_NAME, else the contents of node_file
+//	  node_file = ""
 //	}
+//
+// node_file exists for the Helm chart, whose extraEnvironmentVars takes only
+// literal values, so NODE_NAME cannot come from the downward API there. An init
+// container we do control writes the node name to a shared file instead.
 //
 // It fails if this node has no artifact, rather than starting and failing later
 // at unseal time with a less obvious error.
@@ -78,9 +83,9 @@ func (w *Wrapper) SetConfig(_ context.Context, opts ...wrapping.Option) (*wrappi
 		return nil, fmt.Errorf("tpmwrap: no artifacts directory configured")
 	}
 	device := firstNonEmpty(config["device"], os.Getenv("BAO_TPM_DEVICE"), tpmkey.DefaultDevice)
-	node := firstNonEmpty(config["node"], os.Getenv("NODE_NAME"))
-	if node == "" {
-		return nil, fmt.Errorf("tpmwrap: no node name configured and NODE_NAME is unset")
+	node, err := nodeName(config)
+	if err != nil {
+		return nil, err
 	}
 
 	recipients, err := loadArtifacts(dir)
@@ -204,6 +209,27 @@ func (w *Wrapper) Decrypt(_ context.Context, blob *wrapping.BlobInfo, opts ...wr
 		return nil, err
 	}
 	return env.Open(dek, options.WithAad)
+}
+
+// nodeName resolves which node this is: explicit config, then the environment,
+// then a file written by an init container.
+func nodeName(config map[string]string) (string, error) {
+	if node := firstNonEmpty(config["node"], os.Getenv("NODE_NAME")); node != "" {
+		return node, nil
+	}
+	path := firstNonEmpty(config["node_file"], os.Getenv("BAO_TPM_NODE_FILE"))
+	if path == "" {
+		return "", fmt.Errorf("tpmwrap: node name not configured: set node, NODE_NAME or node_file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("tpmwrap: reading node name from %s: %w", path, err)
+	}
+	node := strings.TrimSpace(string(data))
+	if node == "" {
+		return "", fmt.Errorf("tpmwrap: %s is empty", path)
+	}
+	return node, nil
 }
 
 // loadArtifacts reads every *.json in dir as an enrollment artifact.

@@ -212,3 +212,40 @@ func TestLoadArtifactsRejectsUnknownVersion(t *testing.T) {
 		t.Fatal("loadArtifacts accepted an unknown artifact version")
 	}
 }
+
+func TestNodeNameFromFile(t *testing.T) {
+	sim := newSim(t)
+	dir := enrolDir(t, sim, "node-a")
+
+	path := filepath.Join(t.TempDir(), "node")
+	if err := os.WriteFile(path, []byte("node-a\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	w := New()
+	w.open = func(string) (transport.TPMCloser, error) { return sim, nil }
+	config, err := w.SetConfig(context.Background(), wrapping.WithConfigMap(map[string]string{
+		"artifacts": dir,
+		"node_file": path,
+	}))
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if config.Metadata["node"] != "node-a" {
+		t.Fatalf("node %q, want node-a", config.Metadata["node"])
+	}
+}
+
+func TestNodeNameMissing(t *testing.T) {
+	sim := newSim(t)
+	dir := enrolDir(t, sim, "node-a")
+
+	t.Setenv("NODE_NAME", "")
+	w := New()
+	w.open = func(string) (transport.TPMCloser, error) { return sim, nil }
+	if _, err := w.SetConfig(context.Background(), wrapping.WithConfigMap(map[string]string{
+		"artifacts": dir,
+	})); err == nil {
+		t.Fatal("SetConfig accepted a missing node name")
+	}
+}
