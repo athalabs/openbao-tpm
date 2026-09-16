@@ -32,10 +32,23 @@ const (
 	EnvelopeVersion = 1
 )
 
-// aad is bound into the AEAD so a payload cannot be replayed under a different
-// format version. The recipient list is deliberately *not* part of it: adding a
-// node must not require re-encrypting the payload.
-var aad = []byte("openbao-tpm/envelope/v1")
+// formatAAD is bound into the AEAD so a payload cannot be replayed under a
+// different format version. The recipient list is deliberately *not* part of it:
+// adding a node must not require re-encrypting the payload.
+var formatAAD = []byte("openbao-tpm/envelope/v1")
+
+// aad combines the format tag with caller-supplied additional authenticated
+// data. OpenBao's seal interface may pass its own AAD, and dropping it silently
+// would discard an integrity binding the caller expects to hold.
+func aad(extra []byte) []byte {
+	if len(extra) == 0 {
+		return formatAAD
+	}
+	out := make([]byte, 0, len(formatAAD)+1+len(extra))
+	out = append(out, formatAAD...)
+	out = append(out, '/')
+	return append(out, extra...)
+}
 
 // Artifact is the result of enrolling one node. Everything in it is public
 // except nothing: the private blob is encrypted to that node's TPM seed, so the
@@ -124,7 +137,7 @@ type Envelope struct {
 // recipient's TPM-resident public key. No TPM is needed here: wrapping is
 // public-key only, which is why sealing works from a laptop or from a pod that
 // happens to be scheduled anywhere.
-func Wrap(plaintext []byte, recipients []Artifact) (*Envelope, error) {
+func Wrap(plaintext, extraAAD []byte, recipients []Artifact) (*Envelope, error) {
 	if len(recipients) == 0 {
 		return nil, errors.New("envelope: no recipients")
 	}
@@ -146,7 +159,7 @@ func Wrap(plaintext []byte, recipients []Artifact) (*Envelope, error) {
 	env := &Envelope{
 		Version:    EnvelopeVersion,
 		Nonce:      nonce,
-		Ciphertext: aead.Seal(nil, nonce, plaintext, aad),
+		Ciphertext: aead.Seal(nil, nonce, plaintext, aad(extraAAD)),
 	}
 
 	for i := range recipients {
@@ -181,7 +194,7 @@ func (e *Envelope) RecipientFor(keyName string) (*Recipient, error) {
 }
 
 // Open decrypts the payload with a DEK recovered from a TPM.
-func (e *Envelope) Open(dek []byte) ([]byte, error) {
+func (e *Envelope) Open(dek, extraAAD []byte) ([]byte, error) {
 	if e.Version != EnvelopeVersion {
 		return nil, fmt.Errorf("envelope: version %d, want %d", e.Version, EnvelopeVersion)
 	}
@@ -189,7 +202,7 @@ func (e *Envelope) Open(dek []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := aead.Open(nil, e.Nonce, e.Ciphertext, aad)
+	plaintext, err := aead.Open(nil, e.Nonce, e.Ciphertext, aad(extraAAD))
 	if err != nil {
 		return nil, fmt.Errorf("envelope: opening payload: %w", err)
 	}

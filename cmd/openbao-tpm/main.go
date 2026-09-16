@@ -200,7 +200,7 @@ func wrap(args []string) error {
 	if err != nil {
 		return err
 	}
-	env, err := envelope.Wrap(payload, arts)
+	env, err := envelope.Wrap(payload, nil, arts)
 	if err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func unwrap(args []string) error {
 	if err != nil {
 		return err
 	}
-	payload, err := env.Open(dek)
+	payload, err := env.Open(dek, nil)
 	if err != nil {
 		return err
 	}
@@ -330,7 +330,7 @@ func runSelftest(t transport.TPM, node string, pcrs []uint) error {
 	fmt.Printf("policy:    %s\n", hex.EncodeToString(art.PCRDigest))
 
 	payload := []byte("openbao-tpm selftest payload")
-	env, err := envelope.Wrap(payload, []envelope.Artifact{*art})
+	env, err := envelope.Wrap(payload, nil, []envelope.Artifact{*art})
 	if err != nil {
 		return fmt.Errorf("wrap: %w", err)
 	}
@@ -339,7 +339,7 @@ func runSelftest(t transport.TPM, node string, pcrs []uint) error {
 	if err != nil {
 		return fmt.Errorf("unwrap: %w", err)
 	}
-	got, err := env.Open(dek)
+	got, err := env.Open(dek, nil)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}

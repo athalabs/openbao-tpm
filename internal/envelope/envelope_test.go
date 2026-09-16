@@ -43,7 +43,7 @@ func TestWrapOpenEveryRecipient(t *testing.T) {
 	b, bKey := softNode(t, "node-b")
 	secret := []byte("openbao root key")
 
-	env, err := Wrap(secret, []Artifact{a, b})
+	env, err := Wrap(secret, nil, []Artifact{a, b})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestWrapOpenEveryRecipient(t *testing.T) {
 			if err != nil {
 				t.Fatalf("RecipientFor: %v", err)
 			}
-			got, err := env.Open(unwrapWith(t, tc.key, r.WrappedDEK))
+			got, err := env.Open(unwrapWith(t, tc.key, r.WrappedDEK), nil)
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
@@ -78,7 +78,7 @@ func TestUnenrolledMachineIsRejected(t *testing.T) {
 	a, _ := softNode(t, "node-a")
 	stranger, strangerKey := softNode(t, "node-d")
 
-	env, err := Wrap([]byte("openbao root key"), []Artifact{a})
+	env, err := Wrap([]byte("openbao root key"), nil, []Artifact{a})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
@@ -94,33 +94,52 @@ func TestUnenrolledMachineIsRejected(t *testing.T) {
 
 func TestTamperedCiphertextFails(t *testing.T) {
 	a, aKey := softNode(t, "node-a")
-	env, err := Wrap([]byte("openbao root key"), []Artifact{a})
+	env, err := Wrap([]byte("openbao root key"), nil, []Artifact{a})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
 	env.Ciphertext[0] ^= 0xff
 
 	dek := unwrapWith(t, aKey, env.Recipients[0].WrappedDEK)
-	if _, err := env.Open(dek); err == nil {
+	if _, err := env.Open(dek, nil); err == nil {
 		t.Fatal("Open accepted a tampered ciphertext")
 	}
 }
 
 func TestVersionMismatchRefused(t *testing.T) {
 	a, aKey := softNode(t, "node-a")
-	env, err := Wrap([]byte("openbao root key"), []Artifact{a})
+	env, err := Wrap([]byte("openbao root key"), nil, []Artifact{a})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
 	dek := unwrapWith(t, aKey, env.Recipients[0].WrappedDEK)
 	env.Version = 99
-	if _, err := env.Open(dek); err == nil {
+	if _, err := env.Open(dek, nil); err == nil {
 		t.Fatal("Open accepted an unknown envelope version")
 	}
 }
 
 func TestWrapRequiresRecipients(t *testing.T) {
-	if _, err := Wrap([]byte("x"), nil); err == nil {
+	if _, err := Wrap([]byte("x"), nil, nil); err == nil {
 		t.Fatal("Wrap accepted an empty recipient list")
+	}
+}
+
+func TestAADMustMatch(t *testing.T) {
+	a, aKey := softNode(t, "node-a")
+	env, err := Wrap([]byte("openbao root key"), []byte("context-a"), []Artifact{a})
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	dek := unwrapWith(t, aKey, env.Recipients[0].WrappedDEK)
+
+	if _, err := env.Open(dek, []byte("context-b")); err == nil {
+		t.Fatal("Open accepted mismatched additional authenticated data")
+	}
+	if _, err := env.Open(dek, nil); err == nil {
+		t.Fatal("Open accepted missing additional authenticated data")
+	}
+	if _, err := env.Open(dek, []byte("context-a")); err != nil {
+		t.Fatalf("Open with matching AAD: %v", err)
 	}
 }

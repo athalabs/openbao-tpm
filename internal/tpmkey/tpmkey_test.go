@@ -35,7 +35,7 @@ func TestEnrollThenUnwrap(t *testing.T) {
 	}
 
 	secret := []byte("openbao root key")
-	env, err := envelope.Wrap(secret, []envelope.Artifact{*art})
+	env, err := envelope.Wrap(secret, nil, []envelope.Artifact{*art})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestEnrollThenUnwrap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unwrap: %v", err)
 	}
-	got, err := env.Open(dek)
+	got, err := env.Open(dek, nil)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestUnwrapRejectsAnotherKeysEntry(t *testing.T) {
 		t.Fatal("two enrollments produced the same key name")
 	}
 
-	env, err := envelope.Wrap([]byte("openbao root key"), []envelope.Artifact{*second})
+	env, err := envelope.Wrap([]byte("openbao root key"), nil, []envelope.Artifact{*second})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestUnwrapFailsAfterPCRChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
-	env, err := envelope.Wrap([]byte("openbao root key"), []envelope.Artifact{*art})
+	env, err := envelope.Wrap([]byte("openbao root key"), nil, []envelope.Artifact{*art})
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
