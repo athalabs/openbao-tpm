@@ -47,9 +47,22 @@ clean-probe:
 # End-to-end: a real OpenBao on NODE that unseals itself with this node's TPM.
 # Enrol NODE first (just probe NODE, then enroll) -- see deploy/README.md.
 e2e NODE: build-plugin
-  sed -e "s/NODE_PLACEHOLDER/{{NODE}}/" -e "s/PLUGIN_SHA/$(shasum -a 256 bin/openbao-plugin-kms-tpm | cut -d' ' -f1)/" deploy/e2e-openbao.yaml | kubectl apply -f -
-  kubectl -n tpm-probe wait --for=condition=Initialized=false pod -l app.kubernetes.io/name=openbao-tpm-e2e --timeout=60s || true
-  kubectl -n tpm-probe cp bin/openbao-plugin-kms-tpm $(kubectl -n tpm-probe get pod -l app.kubernetes.io/name=openbao-tpm-e2e -o name | head -1 | cut -d/ -f2):/openbao/plugins/openbao-plugin-kms-tpm -c stage-plugin
+  #!/usr/bin/env bash
+  set -euo pipefail
+  SHA=$(shasum -a 256 bin/openbao-plugin-kms-tpm | cut -d' ' -f1)
+  sed -e "s/NODE_PLACEHOLDER/{{NODE}}/" -e "s/PLUGIN_SHA/${SHA}/" deploy/e2e-openbao.yaml | kubectl apply -f -
+  # The init container waits for the binary, so copy it in once that container
+  # is running -- the pod stays Initialized=false for as long as it waits.
+  POD=""
+  for _ in $(seq 60); do
+    POD=$(kubectl -n tpm-probe get pod -l app.kubernetes.io/name=openbao-tpm-e2e -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [ -n "$POD" ] && [ -n "$(kubectl -n tpm-probe get pod "$POD" -o jsonpath='{.status.initContainerStatuses[0].state.running.startedAt}' 2>/dev/null || true)" ]; then
+      break
+    fi
+    sleep 2
+  done
+  kubectl -n tpm-probe cp bin/openbao-plugin-kms-tpm "$POD":/openbao/plugins/openbao-plugin-kms-tpm -c stage-plugin
+  kubectl -n tpm-probe exec "$POD" -c stage-plugin -- touch /openbao/plugins/.ready
   kubectl -n tpm-probe rollout status deploy/openbao --timeout=180s
 
 e2e-status:

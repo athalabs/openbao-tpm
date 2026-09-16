@@ -71,7 +71,11 @@ spec:
       labels:
         app.kubernetes.io/name: openbao-tpm-e2e
     spec:
-      nodeName: NODE_PLACEHOLDER
+      # A node selector, not nodeName: the local-path storage class binds on
+      # WaitForFirstConsumer, which needs the scheduler to pick the node.
+      # nodeName bypasses the scheduler and the claim stays Pending forever.
+      nodeSelector:
+        kubernetes.io/hostname: NODE_PLACEHOLDER
       initContainers:
         # Waits for the plugin binary to be copied in, then records the node
         # name for the seal. In a real deployment this container would carry the
@@ -81,7 +85,9 @@ spec:
           command: [sh, -ec]
           args:
             - |
-              until [ -s /openbao/plugins/openbao-plugin-kms-tpm ]; do sleep 2; done
+              # Wait for a marker, not for the binary itself: the copy is a
+              # stream, and reacting to a partially written file kills it.
+              until [ -f /openbao/plugins/.ready ]; do sleep 2; done
               chmod 0755 /openbao/plugins/openbao-plugin-kms-tpm
               printf '%s' "$NODE_NAME" > /openbao/plugins/node
               echo stagedfor "$NODE_NAME"
